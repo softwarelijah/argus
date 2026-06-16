@@ -103,7 +103,13 @@ def build_engine(
 
     logger = trt.Logger(trt.Logger.INFO)  # pragma: no cover
     builder = trt.Builder(logger)
-    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+    # TensorRT 10 networks are explicit-batch by default and the EXPLICIT_BATCH
+    # flag is removed; on TRT 8.x the flag is required. Pass it only if present.
+    flags = 0
+    explicit_batch = getattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH", None)
+    if explicit_batch is not None:
+        flags = 1 << int(explicit_batch)
+    network = builder.create_network(flags)
     parser = trt.OnnxParser(network, logger)
 
     with open(onnx_path, "rb") as f:

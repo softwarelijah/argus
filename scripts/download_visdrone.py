@@ -3,10 +3,11 @@
 Usage:
     python scripts/download_visdrone.py --root datasets/VisDrone
 
-VisDrone is distributed as Google Drive zips. The official ids are filled in
-below; if Google Drive rate-limits, download the zips manually from
-https://github.com/VisDrone/VisDrone-Dataset and pass --skip-download to just
-unpack files already present under --root.
+Downloads the VisDrone-DET2019 splits from the stable Ultralytics GitHub
+release mirror (direct zip downloads, no Google Drive rate limits). If a
+download fails, fetch the zips manually from
+https://github.com/VisDrone/VisDrone-Dataset into --root and re-run with
+--skip-download to just unpack them.
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ import zipfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
-# Official VisDrone-DET2019 release archives.
+# VisDrone-DET2019 archives mirrored as GitHub release assets (direct download).
+_BASE = "https://github.com/ultralytics/yolov5/releases/download/v1.0"
 ARCHIVES = {
-    "VisDrone2019-DET-train.zip": "https://github.com/VisDrone/VisDrone-Dataset",
-    "VisDrone2019-DET-val.zip": "https://github.com/VisDrone/VisDrone-Dataset",
-    "VisDrone2019-DET-test-dev.zip": "https://github.com/VisDrone/VisDrone-Dataset",
+    "VisDrone2019-DET-train.zip": f"{_BASE}/VisDrone2019-DET-train.zip",
+    "VisDrone2019-DET-val.zip": f"{_BASE}/VisDrone2019-DET-val.zip",
+    "VisDrone2019-DET-test-dev.zip": f"{_BASE}/VisDrone2019-DET-test-dev.zip",
 }
 
 

@@ -39,9 +39,38 @@ class TRTEngine:
         self.outputs: list[dict] = []
         self.bindings: list[int] = []
         self.stream = cuda.Stream()
-        self._allocate()
 
-    def _allocate(self) -> None:
+        # The binding-index API (num_bindings, get_binding_*, execute_async_v2)
+        # was deprecated in TensorRT 8.5 and removed in TensorRT 10, which is
+        # what JetPack 6 ships. Detect the available API and use the named-tensor
+        # API (num_io_tensors, set_tensor_address, execute_async_v3) when present
+        # so the same engine wrapper runs on TRT 8.x and 10.x.
+        self._use_v3 = hasattr(self.engine, "num_io_tensors")
+        if self._use_v3:
+            self._allocate_v3()
+        else:
+            self._allocate_legacy()
+
+    def _allocate_v3(self) -> None:
+        cuda, trt = self._cuda, self._trt
+        for i in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(i)
+            shape = tuple(self.engine.get_tensor_shape(name))
+            dtype = trt.nptype(self.engine.get_tensor_dtype(name))
+            size = int(np.prod(shape))
+
+            host_mem = cuda.pagelocked_empty(size, dtype)
+            device_mem = cuda.mem_alloc(host_mem.nbytes)
+            self.context.set_tensor_address(name, int(device_mem))
+
+            binding = {"name": name, "shape": shape, "dtype": dtype,
+                       "host": host_mem, "device": device_mem}
+            if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                self.inputs.append(binding)
+            else:
+                self.outputs.append(binding)
+
+    def _allocate_legacy(self) -> None:
         cuda, trt = self._cuda, self._trt
         for i in range(self.engine.num_bindings):
             name = self.engine.get_binding_name(i)
@@ -67,15 +96,17 @@ class TRTEngine:
         np.copyto(inp["host"], blob.ravel())
         cuda.memcpy_htod_async(inp["device"], inp["host"], self.stream)
 
-        self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+        if self._use_v3:
+            self.context.execute_async_v3(stream_handle=self.stream.handle)
+        else:
+            self.context.execute_async_v2(
+                bindings=self.bindings, stream_handle=self.stream.handle
+            )
 
-        results = []
         for out in self.outputs:
             cuda.memcpy_dtoh_async(out["host"], out["device"], self.stream)
         self.stream.synchronize()
-        for out in self.outputs:
-            results.append(out["host"].reshape(out["shape"]).copy())
-        return results
+        return [out["host"].reshape(out["shape"]).copy() for out in self.outputs]
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
         try:
