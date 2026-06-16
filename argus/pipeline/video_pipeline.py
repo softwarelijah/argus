@@ -44,18 +44,34 @@ class VideoPipeline:
         tracker_config: TrackerConfig | None = None,
         names: dict[int, str] | None = None,
         draw: bool = True,
+        reid_extractor=None,
     ) -> None:
         self.detector = detector
-        self.tracker = ByteTracker(tracker_config or TrackerConfig())
+        self.config = tracker_config or TrackerConfig()
+        self.tracker = ByteTracker(self.config)
         self.names = names or getattr(detector, "names", {}) or {}
         self.draw = draw
+        self.reid_extractor = reid_extractor
+
+        # GMC needs the frame; Re-ID needs both the frame and per-box crops.
+        self._needs_frame = self.config.gmc_method != "none"
         self.meter = FPSMeter()
 
     def process_frame(self, frame: np.ndarray, frame_id: int) -> PipelineResult:
         with self.meter.stage("detect"):
             detections = self.detector.detect(frame)
+
+        embeddings = None
+        if self.config.with_reid and self.reid_extractor is not None and len(detections) > 0:
+            with self.meter.stage("reid"):
+                embeddings = self.reid_extractor.extract(frame, detections.boxes)
+
         with self.meter.stage("track"):
-            tracks = self.tracker.update(detections.to_array())
+            tracks = self.tracker.update(
+                detections.to_array(),
+                frame=frame if self._needs_frame else None,
+                embeddings=embeddings,
+            )
 
         self.meter.tick()
         latency = self.meter.latency_ms("detect") + self.meter.latency_ms("track")

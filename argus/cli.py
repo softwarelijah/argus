@@ -14,19 +14,28 @@ import sys
 
 
 def _build_detector(args):
-    """Pick the detector backend from CLI args."""
+    """Pick the detector backend from CLI args, optionally wrapped in SAHI."""
     if args.engine:
         from .data.visdrone import names_dict
         from .inference.trt_detector import TRTDetector
 
-        return TRTDetector(
+        detector = TRTDetector(
             args.engine, imgsz=args.imgsz, conf=args.conf, names=names_dict()
         )
-    from .detection.detector import YOLODetector
+    else:
+        from .detection.detector import YOLODetector
 
-    return YOLODetector(
-        args.weights, conf=args.conf, imgsz=args.imgsz, device=args.device
-    )
+        detector = YOLODetector(
+            args.weights, conf=args.conf, imgsz=args.imgsz, device=args.device
+        )
+
+    if getattr(args, "sahi", False):
+        from .detection.sahi import SlicedDetector
+
+        detector = SlicedDetector(
+            detector, slice_h=args.slice, slice_w=args.slice, overlap=args.slice_overlap
+        )
+    return detector
 
 
 def cmd_track(args) -> int:
@@ -36,10 +45,21 @@ def cmd_track(args) -> int:
     from .tracking import TrackerConfig
 
     detector = _build_detector(args)
+
+    reid_extractor = None
+    if args.reid:
+        from .inference.reid import ReIDExtractor
+
+        reid_extractor = ReIDExtractor(device=args.device)
+
+    config = TrackerConfig(
+        track_thresh=args.track_thresh,
+        frame_rate=args.fps,
+        gmc_method=args.gmc,
+        with_reid=args.reid,
+    )
     pipeline = VideoPipeline(
-        detector,
-        TrackerConfig(track_thresh=args.track_thresh, frame_rate=args.fps),
-        draw=not args.no_draw,
+        detector, config, draw=not args.no_draw, reid_extractor=reid_extractor
     )
 
     writer = None
@@ -126,6 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--imgsz", type=int, default=1280)
         p.add_argument("--conf", type=float, default=0.25)
         p.add_argument("--device", default=None, help="cuda device, e.g. '0' or 'cpu'")
+        p.add_argument("--sahi", action="store_true", help="enable SAHI sliced inference")
+        p.add_argument("--slice", type=int, default=640, help="SAHI tile size")
+        p.add_argument("--slice-overlap", type=float, default=0.2, help="SAHI tile overlap")
 
     p_track = sub.add_parser("track", help="run detection + tracking")
     add_common(p_track)
@@ -136,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_track.add_argument("--track-thresh", type=float, default=0.5)
     p_track.add_argument("--fps", type=int, default=30)
     p_track.add_argument("--max-frames", type=int, default=None)
+    p_track.add_argument(
+        "--gmc", choices=["none", "orb", "ecc"], default="none",
+        help="global motion compensation for moving cameras",
+    )
+    p_track.add_argument("--reid", action="store_true", help="enable appearance Re-ID")
     p_track.set_defaults(func=cmd_track)
 
     p_export = sub.add_parser("export", help="export to ONNX / TensorRT")
