@@ -294,10 +294,13 @@ both yields a BoT-SORT-style tracker.
 
 ## Deployment
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full path from cloud
-training (Colab / RunPod) through INT8 export to Jetson deployment, plus the
-[Colab notebook](notebooks/train_visdrone_colab.ipynb). A `Makefile` wraps the
-common workflow (`make demo`, `make test`, `make train`, `make export`).
+The GPU pipeline (train, evaluate, export INT8, benchmark) is one script:
+[`scripts/cloud/runpod_bootstrap.sh`](scripts/cloud/runpod_bootstrap.sh).
+See [docs/RUNPOD.md](docs/RUNPOD.md) for a first-timer walkthrough of renting a
+cloud GPU and running it, [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full
+path through to Jetson INT8, and the
+[Colab notebook](notebooks/train_visdrone_colab.ipynb) for a browser option. A
+`Makefile` wraps the common local workflow (`make demo`, `make test`).
 
 ## Development
 
