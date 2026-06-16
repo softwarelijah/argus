@@ -18,28 +18,40 @@ video  ->  YOLOv8 (TensorRT INT8)  ->  ByteTrack + Kalman  ->  tracked IDs
   with a constant-velocity Kalman filter, holding 50+ concurrent identities at
   30+ FPS.
 - **Small-object detection on VisDrone.** YOLOv8 fine-tuned at 1280 px on the
-  VisDrone-DET dataset, reaching 42 mAP@50 across the 10 evaluation classes.
+  VisDrone-DET dataset, reaching 42 mAP@50 across the 10 evaluation classes,
+  with optional SAHI sliced inference for an extra small-object recall boost.
 - **Edge-optimized inference.** TensorRT INT8 entropy calibration cuts latency
   roughly 3x to sub-30 ms per frame for Jetson-class deployment.
+- **Built for moving cameras.** Global Motion Compensation (GMC) and BoT-SORT
+  style appearance Re-ID keep identities stable under drone ego-motion and
+  occlusion.
+- **Measured, not just claimed.** A from-scratch MOT evaluation harness
+  (MOTA, MOTP, IDF1, ID switches) and a threaded pipeline that overlaps decode
+  with inference.
 
 ## Architecture
 
 ```
 argus/
-  detection/      YOLOv8 wrapper + pure-numpy letterbox / NMS / decode
-  tracking/       ByteTrack: Kalman filter, IoU association, track lifecycle
-  inference/      ONNX export, TensorRT engine build (INT8/FP16), TRT runtime
+  detection/      YOLOv8 wrapper, pure-numpy letterbox / NMS / decode, SAHI tiling
+  tracking/       ByteTrack: Kalman filter, IoU + appearance association, GMC
+  inference/      ONNX export, TensorRT engine build (INT8/FP16), TRT + Re-ID runtime
   data/           VisDrone -> YOLO conversion, INT8 calibration set builder
-  pipeline/       end-to-end video pipeline tying detector + tracker together
+  eval/           CLEAR-MOT / IDF1 metrics and MOTChallenge IO
+  pipeline/       sync and threaded async detect-then-track pipelines
   utils/          config loading, FPS/latency meters, visualization
   cli.py          `argus track | export | prepare | benchmark`
-scripts/          train, evaluate, export_tensorrt, prepare_visdrone, benchmark
-tests/            unit tests for tracking, Kalman, NMS, data conversion
+scripts/          train, evaluate, export_tensorrt, prepare_visdrone, benchmark,
+                  eval_mot, download_visdrone, demo_synthetic
+tests/            60 unit tests: tracking, Kalman, NMS, GMC, SAHI, Re-ID, MOT, pipeline
+docs/             deployment guide (cloud training -> Jetson INT8)
+notebooks/        Colab training notebook
 ```
 
-The detector backends (PyTorch `YOLODetector`, `TRTDetector`) share a single
-`Detections` contract, so the pipeline and tracker are agnostic to whether
-boxes came from PyTorch or a TensorRT engine.
+The detector backends (PyTorch `YOLODetector`, `TRTDetector`, SAHI
+`SlicedDetector`) share a single `Detections` contract, so the pipeline and
+tracker are agnostic to whether boxes came from PyTorch, a TensorRT engine, or
+tiled inference.
 
 ### Why ByteTrack for aerial footage
 
@@ -98,6 +110,65 @@ argus track input.mp4 --engine weights/yolov8s-visdrone-int8.engine --output out
 
 # live RTSP stream with a display window
 argus track rtsp://camera/stream --engine weights/model.engine --show
+```
+
+## Advanced features
+
+### Moving-camera tracking (GMC)
+
+A drone moves, so the whole scene shifts between frames. A constant-velocity
+Kalman filter reads that global shift as per-object motion and drifts, causing
+ID switches. GMC estimates the frame-to-frame camera motion as a 2x3 affine and
+warps track predictions into the current frame before association (the BoT-SORT
+approach). ORB feature matching is the fast default; ECC is more accurate.
+
+```bash
+argus track input.mp4 --engine weights/model.engine --gmc orb
+```
+
+### Small-object recall with SAHI
+
+Tiny aerial targets vanish under a single downscaled forward pass. SAHI runs the
+detector over overlapping tiles at native scale, then merges boxes across tiles
+with class-aware NMS. It trades latency for a large small-object recall gain.
+
+```bash
+argus track input.mp4 --engine weights/model.engine --sahi --slice 640
+```
+
+### Appearance Re-ID
+
+Re-ID adds an embedding per detection and fuses appearance with motion under
+proximity and appearance gates, so occluded targets keep their identity. The
+default backbone is ResNet-18; OSNet is supported via `torchreid`.
+
+```bash
+argus track input.mp4 --engine weights/model.engine --reid
+```
+
+### Threaded real-time pipeline
+
+`--async` decodes frames on a background thread so I/O overlaps inference;
+`--realtime` drops stale frames to hold latency low on live streams.
+
+```bash
+argus track rtsp://camera/stream --engine weights/model.engine --async --realtime --show
+```
+
+### Tracking evaluation (MOT metrics)
+
+A from-scratch CLEAR-MOT and IDF1 implementation makes tracking quality
+measurable. Score a results file, or run the tracker on public detections and
+evaluate in one step:
+
+```bash
+python scripts/eval_mot.py --gt gt.txt --det det.txt
+```
+
+```
+tracking metrics
+  MOTA:        ...   IDF1: ...   ID switches: ...
+  MT / ML:     ...   FP / FN: ...
 ```
 
 ## Reproducing the pipeline
@@ -167,22 +238,39 @@ baseline and clears the sub-30 ms target.
 
 Tunable from `configs/default.yaml` or `TrackerConfig`:
 
-| Field              | Default | Meaning                                  |
-|--------------------|---------|------------------------------------------|
-| `track_thresh`     | 0.5     | high / low detection split               |
-| `track_buffer`     | 30      | frames a lost track survives             |
-| `match_thresh`     | 0.8     | IoU gate for first association stage      |
-| `new_track_thresh` | 0.6     | minimum score to spawn a new track       |
-| `fuse_score`       | true    | weight IoU cost by detection confidence  |
-| `frame_rate`       | 30      | scales the lost-track buffer             |
+| Field               | Default | Meaning                                    |
+|---------------------|---------|--------------------------------------------|
+| `track_thresh`      | 0.5     | high / low detection split                 |
+| `track_buffer`      | 30      | frames a lost track survives               |
+| `match_thresh`      | 0.8     | IoU gate for first association stage        |
+| `new_track_thresh`  | 0.6     | minimum score to spawn a new track         |
+| `fuse_score`        | true    | weight IoU cost by detection confidence    |
+| `frame_rate`        | 30      | scales the lost-track buffer               |
+| `gmc_method`        | none    | camera motion comp: `none` / `orb` / `ecc` |
+| `with_reid`         | false   | fuse appearance embeddings into matching   |
+| `proximity_thresh`  | 0.5     | IoU gate before trusting appearance        |
+| `appearance_thresh` | 0.25    | cosine-distance gate for appearance        |
+
+GMC and Re-ID default off, so the baseline is pure-motion ByteTrack; enabling
+both yields a BoT-SORT-style tracker.
+
+## Deployment
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full path from cloud
+training (Colab / RunPod) through INT8 export to Jetson deployment, plus the
+[Colab notebook](notebooks/train_visdrone_colab.ipynb). A `Makefile` wraps the
+common workflow (`make demo`, `make test`, `make train`, `make export`).
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 30 unit tests: tracking, Kalman, NMS, VisDrone conversion
+pytest            # 60 unit tests: tracking, Kalman, NMS, GMC, SAHI, Re-ID, MOT, pipeline
 ruff check .
 ```
+
+CI runs lint, the full test suite, and a synthetic tracking smoke test across
+Python 3.9 to 3.12 on every push (see `.github/workflows/ci.yml`).
 
 ## License
 

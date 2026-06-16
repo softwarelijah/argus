@@ -18,6 +18,21 @@ tracker:
   fuse_score: true
   frame_rate: 30
 
+  # Moving-camera and appearance options (BoT-SORT style). Off by default.
+  gmc_method: none       # none | orb | ecc
+  gmc_downscale: 2
+  with_reid: false
+  proximity_thresh: 0.5
+  appearance_thresh: 0.25
+  appearance_weight: 0.5
+
+sahi:
+  enabled: false         # tiled inference for small objects
+  slice: 640
+  overlap: 0.2
+
 runtime:
   device: "0"
   draw: true
+  async: false           # background decode thread
+  realtime: false        # drop stale frames on live streams
