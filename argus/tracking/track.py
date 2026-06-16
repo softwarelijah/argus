@@ -18,7 +18,14 @@ class STrack(BaseTrack):
 
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh: np.ndarray, score: float, cls: int = 0) -> None:
+    def __init__(
+        self,
+        tlwh: np.ndarray,
+        score: float,
+        cls: int = 0,
+        feat: np.ndarray | None = None,
+        feat_momentum: float = 0.9,
+    ) -> None:
         super().__init__()
         self._tlwh = np.asarray(tlwh, dtype=np.float32)
         self.kalman_filter: KalmanFilter | None = None
@@ -29,6 +36,49 @@ class STrack(BaseTrack):
         self.score = float(score)
         self.cls = int(cls)
         self.tracklet_len = 0
+
+        # Appearance features for Re-ID (BoT-SORT style). ``smooth_feat`` is an
+        # exponential moving average of observed embeddings; it stays None when
+        # Re-ID is disabled, so the motion-only path is unaffected.
+        self.curr_feat: np.ndarray | None = None
+        self.smooth_feat: np.ndarray | None = None
+        self.feat_momentum = feat_momentum
+        if feat is not None:
+            self.update_features(feat)
+
+    def update_features(self, feat: np.ndarray) -> None:
+        """Update the L2-normalised appearance embedding (EMA over time)."""
+        feat = np.asarray(feat, dtype=np.float32)
+        norm = np.linalg.norm(feat)
+        if norm > 0:
+            feat = feat / norm
+        self.curr_feat = feat
+        if self.smooth_feat is None:
+            self.smooth_feat = feat
+        else:
+            self.smooth_feat = (
+                self.feat_momentum * self.smooth_feat + (1 - self.feat_momentum) * feat
+            )
+            self.smooth_feat /= np.linalg.norm(self.smooth_feat)
+
+    def apply_gmc(self, warp: np.ndarray) -> None:
+        """Warp the track state by a 2x3 affine camera-motion transform."""
+        if self.mean is None:
+            return
+        R = warp[:2, :2]
+        t = warp[:2, 2]
+
+        # Build the 8x8 operator that rotates/scales position and velocity and
+        # leaves aspect/height (and their rates) untouched.
+        R8 = np.eye(8, dtype=np.float32)
+        R8[:2, :2] = R
+        R8[4:6, 4:6] = R
+
+        mean = self.mean.copy()
+        mean[:2] = R @ mean[:2] + t
+        mean[4:6] = R @ mean[4:6]
+        self.mean = mean
+        self.covariance = R8 @ self.covariance @ R8.T
 
     # -- prediction -----------------------------------------------------------
     def predict(self) -> None:
@@ -72,6 +122,8 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -89,6 +141,8 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
         self.state = TrackState.Tracked
         self.is_activated = True
         self.score = new_track.score

@@ -33,6 +33,13 @@ include = ["argus*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Spurious matmul FP warnings emitted only by the macOS Accelerate BLAS
+# backend; the computed covariances are verified correct by the Kalman tests.
+filterwarnings = [
+    "ignore:divide by zero encountered in matmul:RuntimeWarning",
+    "ignore:overflow encountered in matmul:RuntimeWarning",
+    "ignore:invalid value encountered in matmul:RuntimeWarning",
+]
 
 [tool.ruff]
 line-length = 100

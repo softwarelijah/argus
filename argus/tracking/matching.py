@@ -86,6 +86,50 @@ def iou_distance(atracks: list, btracks: list) -> np.ndarray:
     return 1.0 - iou_matrix
 
 
+def embedding_distance(tracks: list, detections: list, metric: str = "cosine") -> np.ndarray:
+    """Appearance cost matrix between tracks and detections.
+
+    Tracks use their smoothed (EMA) embedding; detections use their current
+    embedding. Returns a (T, D) matrix of distances in [0, 2] for cosine.
+    """
+    cost_matrix = np.zeros((len(tracks), len(detections)), dtype=np.float32)
+    if cost_matrix.size == 0:
+        return cost_matrix
+
+    det_feats = np.asarray([d.curr_feat for d in detections], dtype=np.float32)
+    track_feats = np.asarray([t.smooth_feat for t in tracks], dtype=np.float32)
+
+    if metric == "cosine":
+        # Features are L2-normalised on update, so a dot product is the cosine
+        # similarity; distance is 1 - similarity, clamped to be non-negative.
+        sim = track_feats @ det_feats.T
+        cost_matrix = np.maximum(0.0, 1.0 - sim)
+    else:
+        raise ValueError(f"unsupported embedding metric: {metric!r}")
+    return cost_matrix.astype(np.float32)
+
+
+def fuse_motion_appearance(
+    iou_cost: np.ndarray,
+    app_cost: np.ndarray,
+    proximity_thresh: float = 0.5,
+    appearance_thresh: float = 0.25,
+    weight: float = 0.5,
+) -> np.ndarray:
+    """Fuse IoU (motion) and appearance costs into a single cost matrix.
+
+    Appearance is only trusted when the boxes are also spatially plausible:
+    pairs failing the IoU proximity gate or the appearance gate are set to a
+    cost of 1 (rejected). Mirrors the BoT-SORT association rule.
+    """
+    if iou_cost.size == 0:
+        return iou_cost
+    app = app_cost.copy()
+    app[iou_cost > proximity_thresh] = 1.0
+    app[app_cost > appearance_thresh] = 1.0
+    return np.minimum(iou_cost, weight * iou_cost + (1.0 - weight) * app)
+
+
 def fuse_score(cost_matrix: np.ndarray, detections: list) -> np.ndarray:
     """Fuse detection confidence into an IoU cost matrix.
 

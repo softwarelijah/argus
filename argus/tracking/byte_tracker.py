@@ -15,6 +15,7 @@ import numpy as np
 
 from . import matching
 from .basetrack import BaseTrack, TrackState
+from .gmc import GMC
 from .kalman_filter import KalmanFilter
 from .track import STrack
 
@@ -29,6 +30,16 @@ class TrackerConfig:
     new_track_thresh: float = 0.6  # min score to spawn a brand new track
     fuse_score: bool = True
     frame_rate: int = 30
+
+    # Global motion compensation for moving (drone) cameras: "none", "orb", "ecc".
+    gmc_method: str = "none"
+    gmc_downscale: int = 2
+
+    # Appearance Re-ID (BoT-SORT style). Requires per-detection embeddings.
+    with_reid: bool = False
+    proximity_thresh: float = 0.5  # IoU gate before trusting appearance
+    appearance_thresh: float = 0.25  # cosine-distance gate for appearance
+    appearance_weight: float = 0.5  # blend of motion vs appearance cost
 
 
 def _join_tracks(tlista: list[STrack], tlistb: list[STrack]) -> list[STrack]:
@@ -78,6 +89,7 @@ class ByteTracker:
         self.frame_id = 0
         self.kalman_filter = KalmanFilter()
         self.max_time_lost = int(self.config.frame_rate / 30.0 * self.config.track_buffer)
+        self.gmc = GMC(self.config.gmc_method, downscale=self.config.gmc_downscale)
         BaseTrack.reset_id_count()
 
     def reset(self) -> None:
@@ -86,12 +98,21 @@ class ByteTracker:
         self.lost_tracks.clear()
         self.removed_tracks.clear()
         self.frame_id = 0
+        self.gmc.reset()
         BaseTrack.reset_id_count()
 
-    def update(self, detections: np.ndarray) -> list[STrack]:
+    def update(
+        self,
+        detections: np.ndarray,
+        frame: np.ndarray | None = None,
+        embeddings: np.ndarray | None = None,
+    ) -> list[STrack]:
         """Advance the tracker one frame.
 
         ``detections`` is an (N, 6) array of ``[x1, y1, x2, y2, score, cls]``.
+        ``frame`` is the current image; when ``gmc_method`` is enabled it drives
+        camera-motion compensation. ``embeddings`` is an optional (N, D) array of
+        per-detection appearance features used for Re-ID when ``with_reid`` is set.
         Returns the list of currently active (confirmed) tracks.
         """
         self.frame_id += 1
@@ -102,11 +123,17 @@ class ByteTracker:
         boxes = detections[:, :4]
         classes = detections[:, 5]
 
+        use_reid = cfg.with_reid and embeddings is not None and len(embeddings) == len(detections)
+        embeddings = np.asarray(embeddings, dtype=np.float32) if use_reid else None
+
         # Split detections into high and low confidence pools.
         remain_high = scores >= cfg.track_thresh
         low_band = (scores > 0.1) & (scores < cfg.track_thresh)
 
-        dets_high = self._to_stracks(boxes[remain_high], scores[remain_high], classes[remain_high])
+        feats_high = embeddings[remain_high] if use_reid else None
+        dets_high = self._to_stracks(
+            boxes[remain_high], scores[remain_high], classes[remain_high], feats_high
+        )
         dets_low = self._to_stracks(boxes[low_band], scores[low_band], classes[low_band])
 
         # Partition existing tracks into confirmed and tentative.
@@ -117,9 +144,26 @@ class ByteTracker:
         track_pool = _join_tracks(tracked, self.lost_tracks)
         STrack.multi_predict(track_pool)
 
+        # Camera motion compensation: warp predictions into the current frame.
+        if cfg.gmc_method != "none" and frame is not None:
+            warp = self.gmc.apply(frame)
+            for track in track_pool:
+                track.apply_gmc(warp)
+            for track in unconfirmed:
+                track.apply_gmc(warp)
+
         dists = matching.iou_distance(track_pool, dets_high)
         if cfg.fuse_score:
             dists = matching.fuse_score(dists, dets_high)
+        if use_reid:
+            app_cost = matching.embedding_distance(track_pool, dets_high)
+            dists = matching.fuse_motion_appearance(
+                dists,
+                app_cost,
+                proximity_thresh=cfg.proximity_thresh,
+                appearance_thresh=cfg.appearance_thresh,
+                weight=cfg.appearance_weight,
+            )
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=cfg.match_thresh)
 
         activated, refind = [], []
@@ -203,8 +247,18 @@ class ByteTracker:
         return [t for t in self.tracked_tracks if t.is_activated]
 
     @staticmethod
-    def _to_stracks(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray) -> list[STrack]:
+    def _to_stracks(
+        boxes: np.ndarray,
+        scores: np.ndarray,
+        classes: np.ndarray,
+        feats: np.ndarray | None = None,
+    ) -> list[STrack]:
+        if feats is None:
+            return [
+                STrack(STrack.tlbr_to_tlwh(box), score, cls)
+                for box, score, cls in zip(boxes, scores, classes)
+            ]
         return [
-            STrack(STrack.tlbr_to_tlwh(box), score, cls)
-            for box, score, cls in zip(boxes, scores, classes)
+            STrack(STrack.tlbr_to_tlwh(box), score, cls, feat)
+            for box, score, cls, feat in zip(boxes, scores, classes, feats)
         ]
