@@ -1,0 +1,23 @@
+# Default Argus runtime configuration.
+
+detector:
+  backend: yolo          # yolo | tensorrt
+  weights: weights/yolov8s-visdrone.pt
+  engine: weights/yolov8s-visdrone-int8.engine
+  imgsz: 1280
+  conf: 0.25
+  iou: 0.7
+  half: true
+  num_classes: 10
+
+tracker:
+  track_thresh: 0.5      # high/low detection split
+  track_buffer: 30       # frames to keep a lost track
+  match_thresh: 0.8      # IoU gate for first association stage
+  new_track_thresh: 0.6  # min score to start a new track
+  fuse_score: true
+  frame_rate: 30
+
+runtime:
+  device: "0"
+  draw: true

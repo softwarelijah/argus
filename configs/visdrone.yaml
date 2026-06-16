@@ -1,0 +1,20 @@
+# Ultralytics dataset config for VisDrone-DET (10 classes).
+# Regenerate with: argus prepare --root datasets/VisDrone
+
+path: datasets/VisDrone
+train: VisDrone2019-DET-train/images
+val: VisDrone2019-DET-val/images
+test: VisDrone2019-DET-test-dev/images
+
+nc: 10
+names:
+  - pedestrian
+  - people
+  - bicycle
+  - car
+  - van
+  - truck
+  - tricycle
+  - awning-tricycle
+  - bus
+  - motor
