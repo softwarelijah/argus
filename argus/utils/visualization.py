@@ -48,6 +48,50 @@ def draw_tracks(
     return frame
 
 
+def draw_trails(frame: np.ndarray, store, track_ids, thickness: int = 2) -> np.ndarray:
+    """Draw fading trajectory trails for the given track ids."""
+    if cv2 is None:  # pragma: no cover
+        raise ImportError("opencv-python is required for visualization")
+    for tid in track_ids:
+        pts = store.trail(tid)
+        if len(pts) < 2:
+            continue
+        color = _color_for_id(tid)
+        for i in range(1, len(pts)):
+            p0 = (int(pts[i - 1][0]), int(pts[i - 1][1]))
+            p1 = (int(pts[i][0]), int(pts[i][1]))
+            cv2.line(frame, p0, p1, color, thickness, cv2.LINE_AA)
+    return frame
+
+
+def draw_line(frame: np.ndarray, a, b, label: str = "", color=(0, 200, 255)) -> np.ndarray:
+    """Draw a counting line with an optional label."""
+    if cv2 is None:  # pragma: no cover
+        raise ImportError("opencv-python is required for visualization")
+    a = (int(a[0]), int(a[1]))
+    b = (int(b[0]), int(b[1]))
+    cv2.line(frame, a, b, color, 2, cv2.LINE_AA)
+    if label:
+        mid = ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2)
+        cv2.putText(frame, label, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+    return frame
+
+
+def draw_zone(frame: np.ndarray, polygon, label: str = "", color=(255, 120, 0)) -> np.ndarray:
+    """Draw a polygonal zone outline with an optional label."""
+    if cv2 is None:  # pragma: no cover
+        raise ImportError("opencv-python is required for visualization")
+    pts = np.asarray(polygon, dtype=np.int32).reshape(-1, 1, 2)
+    cv2.polylines(frame, [pts], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
+    if label:
+        x, y = polygon[0]
+        cv2.putText(
+            frame, label, (int(x), int(y) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
+            cv2.LINE_AA,
+        )
+    return frame
+
+
 def draw_hud(frame: np.ndarray, fps: float, num_tracks: int, latency_ms: float = 0.0) -> np.ndarray:
     """Overlay a small heads-up display with FPS and active track count."""
     if cv2 is None:  # pragma: no cover
