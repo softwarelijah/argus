@@ -48,7 +48,7 @@ def _build_detector(args):
 def cmd_track(args) -> int:
     import cv2
 
-    from .pipeline import VideoPipeline
+    from .pipeline import AsyncVideoPipeline, VideoPipeline
     from .tracking import TrackerConfig
 
     detector = _build_detector(args)
@@ -65,9 +65,8 @@ def cmd_track(args) -> int:
         gmc_method=args.gmc,
         with_reid=args.reid,
     )
+    pipeline: VideoPipeline | AsyncVideoPipeline
     if args.async_decode:
-        from .pipeline import AsyncVideoPipeline
-
         pipeline = AsyncVideoPipeline(
             detector, config, draw=not args.no_draw, reid_extractor=reid_extractor,
             realtime=args.realtime,
@@ -82,8 +81,102 @@ def cmd_track(args) -> int:
         if args.output:
             if writer is None:
                 h, w = result.frame.shape[:2]
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
                 writer = cv2.VideoWriter(args.output, fourcc, args.fps, (w, h))
+            writer.write(result.frame)
+        if args.show:
+            cv2.imshow("argus", result.frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+    if writer is not None:
+        writer.release()
+    cv2.destroyAllWindows()
+    return 0
+
+
+def _detector_from_config(cfg):
+    """Build a detector (optionally SAHI-wrapped) from a loaded config dict."""
+    from .data.visdrone import names_dict
+
+    d = cfg.get("detector", {})
+    backend = d.get("backend", "yolo")
+    imgsz = d.get("imgsz", 1280)
+    conf = d.get("conf", 0.25)
+    names = names_dict()
+
+    if backend == "tensorrt":
+        from .inference.trt_detector import TRTDetector
+
+        detector = TRTDetector(d["engine"], imgsz=imgsz, conf=conf, names=names)
+    elif backend == "onnx":
+        from .inference.onnx_detector import ORTDetector
+
+        detector = ORTDetector(d["onnx"], imgsz=imgsz, conf=conf, names=names)
+    else:
+        from .detection.detector import YOLODetector
+
+        detector = YOLODetector(d.get("weights", "yolov8s.pt"), conf=conf, imgsz=imgsz)
+
+    sahi = cfg.get("sahi", {})
+    if sahi.get("enabled", False):
+        from .detection.sahi import SlicedDetector
+
+        detector = SlicedDetector(
+            detector, slice_h=sahi.get("slice", 640), slice_w=sahi.get("slice", 640),
+            overlap=sahi.get("overlap", 0.2),
+        )
+    return detector
+
+
+def cmd_run(args) -> int:
+    """Build the whole pipeline from a YAML config and run it on a source."""
+    import cv2
+
+    from .pipeline import AsyncVideoPipeline, VideoPipeline
+    from .tracking import TrackerConfig
+    from .utils.config import load_config
+
+    cfg = load_config(args.config)
+    detector = _detector_from_config(cfg)
+
+    t = cfg.get("tracker", {})
+    tracker_config = TrackerConfig(
+        track_thresh=t.get("track_thresh", 0.5),
+        track_buffer=t.get("track_buffer", 30),
+        match_thresh=t.get("match_thresh", 0.8),
+        new_track_thresh=t.get("new_track_thresh", 0.6),
+        fuse_score=t.get("fuse_score", True),
+        frame_rate=t.get("frame_rate", 30),
+        gmc_method=t.get("gmc_method", "none"),
+        with_reid=t.get("with_reid", False),
+    )
+
+    runtime = cfg.get("runtime", {})
+    reid_extractor = None
+    if tracker_config.with_reid:
+        from .inference.reid import ReIDExtractor
+
+        reid_extractor = ReIDExtractor(device=runtime.get("device"))
+
+    draw = runtime.get("draw", True)
+    pipeline: VideoPipeline | AsyncVideoPipeline
+    if runtime.get("async", False):
+        pipeline = AsyncVideoPipeline(
+            detector, tracker_config, draw=draw, reid_extractor=reid_extractor,
+            realtime=runtime.get("realtime", False),
+        )
+    else:
+        pipeline = VideoPipeline(detector, tracker_config, draw=draw, reid_extractor=reid_extractor)
+
+    writer = None
+    for result in pipeline.run(args.source, max_frames=args.max_frames):
+        if args.output:
+            if writer is None:
+                h, w = result.frame.shape[:2]
+                writer = cv2.VideoWriter(
+                    args.output, cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore[attr-defined]
+                    tracker_config.frame_rate, (w, h),
+                )
             writer.write(result.frame)
         if args.show:
             cv2.imshow("argus", result.frame)
@@ -209,6 +302,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("source", help="video file or stream")
     p_bench.add_argument("--max-frames", type=int, default=300)
     p_bench.set_defaults(func=cmd_benchmark)
+
+    p_run = sub.add_parser("run", help="run a pipeline defined entirely by a YAML config")
+    p_run.add_argument("source", help="video file, webcam index or stream URL")
+    p_run.add_argument("--config", default="configs/default.yaml")
+    p_run.add_argument("--output", default=None, help="write annotated mp4 here")
+    p_run.add_argument("--show", action="store_true")
+    p_run.add_argument("--max-frames", type=int, default=None)
+    p_run.set_defaults(func=cmd_run)
 
     return parser
 
