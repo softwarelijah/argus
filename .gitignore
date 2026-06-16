@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Models and weights
+*.pt
+*.onnx
+*.engine
+*.trt
+weights/
+runs/
+
+# Data
+datasets/
+data/raw/
+data/VisDrone*/
+*.mp4
+*.avi
+*.mkv
+!assets/*.mp4
+
+# Outputs
+outputs/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

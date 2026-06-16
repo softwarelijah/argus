@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-tracker"
+version = "0.1.0"
+description = "Real-time aerial detection and multi-object tracking with YOLOv8, ByteTrack and TensorRT"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Elijah Mendez" }]
+keywords = ["object-detection", "tracking", "yolov8", "bytetrack", "tensorrt", "visdrone", "aerial"]
+
+dependencies = [
+    "numpy>=1.24,<2.2",
+    "opencv-python>=4.8",
+    "pyyaml>=6.0",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.1", "torchvision>=0.16", "ultralytics>=8.1", "tqdm>=4.66"]
+export = ["onnx>=1.15", "onnxruntime>=1.17"]
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4"]
+
+[project.scripts]
+argus = "argus.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["argus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["B008"]
