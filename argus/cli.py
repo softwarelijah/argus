@@ -22,6 +22,13 @@ def _build_detector(args):
         detector = TRTDetector(
             args.engine, imgsz=args.imgsz, conf=args.conf, names=names_dict()
         )
+    elif getattr(args, "onnx", None):
+        from .data.visdrone import names_dict
+        from .inference.onnx_detector import ORTDetector
+
+        detector = ORTDetector(
+            args.onnx, imgsz=args.imgsz, conf=args.conf, names=names_dict()
+        )
     else:
         from .detection.detector import YOLODetector
 
@@ -151,6 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(p):
         p.add_argument("--weights", default="yolov8s.pt", help="YOLOv8 .pt weights")
         p.add_argument("--engine", default=None, help="TensorRT .engine (overrides weights)")
+        p.add_argument("--onnx", default=None, help="ONNX model for CPU inference")
         p.add_argument("--imgsz", type=int, default=1280)
         p.add_argument("--conf", type=float, default=0.25)
         p.add_argument("--device", default=None, help="cuda device, e.g. '0' or 'cpu'")
