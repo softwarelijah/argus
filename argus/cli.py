@@ -58,9 +58,17 @@ def cmd_track(args) -> int:
         gmc_method=args.gmc,
         with_reid=args.reid,
     )
-    pipeline = VideoPipeline(
-        detector, config, draw=not args.no_draw, reid_extractor=reid_extractor
-    )
+    if args.async_decode:
+        from .pipeline import AsyncVideoPipeline
+
+        pipeline = AsyncVideoPipeline(
+            detector, config, draw=not args.no_draw, reid_extractor=reid_extractor,
+            realtime=args.realtime,
+        )
+    else:
+        pipeline = VideoPipeline(
+            detector, config, draw=not args.no_draw, reid_extractor=reid_extractor
+        )
 
     writer = None
     for result in pipeline.run(args.source, max_frames=args.max_frames):
@@ -164,6 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="global motion compensation for moving cameras",
     )
     p_track.add_argument("--reid", action="store_true", help="enable appearance Re-ID")
+    p_track.add_argument(
+        "--async", dest="async_decode", action="store_true",
+        help="decode frames on a background thread (overlaps I/O with inference)",
+    )
+    p_track.add_argument(
+        "--realtime", action="store_true",
+        help="with --async, drop stale frames to minimise latency on live streams",
+    )
     p_track.set_defaults(func=cmd_track)
 
     p_export = sub.add_parser("export", help="export to ONNX / TensorRT")
