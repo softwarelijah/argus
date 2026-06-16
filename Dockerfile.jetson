@@ -1,0 +1,26 @@
+# Jetson deployment image. Built on the NVIDIA L4T ML base, which ships CUDA,
+# cuDNN and TensorRT for the device. Build ON the Jetson (or with the L4T
+# cross-build tooling); the base image is arm64 + JetPack specific.
+#
+#   docker build -f Dockerfile.jetson -t argus:jetson .
+#   docker run --runtime nvidia -it --rm \
+#       -v $PWD/weights:/app/weights argus:jetson \
+#       argus track /dev/video0 --engine weights/model.engine --show
+#
+# Pin the tag to the JetPack version installed on the device.
+FROM nvcr.io/nvidia/l4t-ml:r35.2.1-py3
+
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# numpy/scipy/opencv and TensorRT/pycuda are provided by the L4T base image.
+COPY . .
+RUN pip3 install --no-cache-dir -e . pyyaml
+
+ENTRYPOINT ["argus"]
+CMD ["--help"]
