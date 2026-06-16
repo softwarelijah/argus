@@ -63,7 +63,7 @@ class STrack(BaseTrack):
 
     def apply_gmc(self, warp: np.ndarray) -> None:
         """Warp the track state by a 2x3 affine camera-motion transform."""
-        if self.mean is None:
+        if self.mean is None or self.covariance is None:
             return
         R = warp[:2, :2]
         t = warp[:2, 2]
@@ -82,6 +82,8 @@ class STrack(BaseTrack):
 
     # -- prediction -----------------------------------------------------------
     def predict(self) -> None:
+        assert self.mean is not None and self.covariance is not None  # activated
+        assert self.kalman_filter is not None
         mean_state = self.mean.copy()
         if self.state != TrackState.Tracked:
             mean_state[7] = 0  # zero the height velocity when not actively tracked
@@ -91,7 +93,8 @@ class STrack(BaseTrack):
     def multi_predict(tracks: list[STrack]) -> None:
         if not tracks:
             return
-        multi_mean = np.asarray([t.mean.copy() for t in tracks])
+        assert all(t.mean is not None and t.covariance is not None for t in tracks)
+        multi_mean = np.asarray([t.mean.copy() for t in tracks])  # type: ignore[union-attr]
         multi_covariance = np.asarray([t.covariance for t in tracks])
         for i, t in enumerate(tracks):
             if t.state != TrackState.Tracked:
@@ -119,6 +122,8 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
     def re_activate(self, new_track: STrack, frame_id: int, new_id: bool = False) -> None:
+        assert self.mean is not None and self.covariance is not None  # activated
+        assert self.kalman_filter is not None
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
@@ -138,6 +143,8 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.tracklet_len += 1
 
+        assert self.mean is not None and self.covariance is not None  # activated
+        assert self.kalman_filter is not None
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )

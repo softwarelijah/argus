@@ -1,5 +1,10 @@
 # Argus
 
+![CI](https://github.com/your-user/argus/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Checks](https://img.shields.io/badge/ruff%20%7C%20mypy-passing-success)
+
 Real-time aerial detection and multi-object tracking. Argus pairs a YOLOv8
 detector fine-tuned for small aerial targets with a ByteTrack association stage
 and a TensorRT INT8 runtime, so it holds stable identities on 50+ targets at
@@ -35,23 +40,25 @@ video  ->  YOLOv8 (TensorRT INT8)  ->  ByteTrack + Kalman  ->  tracked IDs
 argus/
   detection/      YOLOv8 wrapper, pure-numpy letterbox / NMS / decode, SAHI tiling
   tracking/       ByteTrack: Kalman filter, IoU + appearance association, GMC
-  inference/      ONNX export, TensorRT engine build (INT8/FP16), TRT + Re-ID runtime
+  inference/      ONNX export, ONNX Runtime (CPU) + TensorRT (INT8) detectors, Re-ID
   data/           VisDrone -> YOLO conversion, INT8 calibration set builder
-  eval/           CLEAR-MOT / IDF1 metrics and MOTChallenge IO
+  eval/           CLEAR-MOT / IDF1 metrics, MOTChallenge IO, synthetic scenes, interpolation
+  analytics/      line counting, zone occupancy, speed estimation, trajectories
   pipeline/       sync and threaded async detect-then-track pipelines
   utils/          config loading, FPS/latency meters, visualization
-  cli.py          `argus track | export | prepare | benchmark`
+  cli.py          `argus run | track | export | prepare | benchmark`
 scripts/          train, evaluate, export_tensorrt, prepare_visdrone, benchmark,
-                  eval_mot, download_visdrone, demo_synthetic
-tests/            60 unit tests: tracking, Kalman, NMS, GMC, SAHI, Re-ID, MOT, pipeline
-docs/             deployment guide (cloud training -> Jetson INT8)
+                  eval_mot, eval_mot_demo, benchmark_tracker, download_visdrone, demos
+tests/            79 unit tests: tracking, Kalman, NMS, GMC, SAHI, Re-ID, ONNX, MOT, analytics
+docs/             deployment + design notes
 notebooks/        Colab training notebook
 ```
 
-The detector backends (PyTorch `YOLODetector`, `TRTDetector`, SAHI
-`SlicedDetector`) share a single `Detections` contract, so the pipeline and
-tracker are agnostic to whether boxes came from PyTorch, a TensorRT engine, or
-tiled inference.
+The detector backends (PyTorch `YOLODetector`, ONNX Runtime `ORTDetector`,
+TensorRT `TRTDetector`, SAHI `SlicedDetector`) share a single `Detections`
+contract, so the pipeline and tracker are agnostic to whether boxes came from
+PyTorch, ONNX Runtime, a TensorRT engine, or tiled inference. See
+[docs/DESIGN.md](docs/DESIGN.md) for the rationale behind each layer.
 
 ### Why ByteTrack for aerial footage
 
@@ -102,14 +109,21 @@ unique track ids:      98
 Track real footage once you have weights or an engine:
 
 ```bash
+# CPU, no GPU or PyTorch: export once, then run an ONNX model
+argus export --weights yolov8n.pt --onnx weights/yolov8n.onnx
+argus track input.mp4 --onnx weights/yolov8n.onnx --output out.mp4
+
 # PyTorch backend
 argus track input.mp4 --weights weights/yolov8s-visdrone.pt --device 0 --output out.mp4
 
 # TensorRT INT8 backend
 argus track input.mp4 --engine weights/yolov8s-visdrone-int8.engine --output out.mp4
 
-# live RTSP stream with a display window
-argus track rtsp://camera/stream --engine weights/model.engine --show
+# live RTSP stream, threaded decode, motion compensation
+argus track rtsp://camera/stream --engine weights/model.engine --async --realtime --gmc orb --show
+
+# or drive everything from one YAML file
+argus run input.mp4 --config configs/default.yaml --output out.mp4
 ```
 
 ## Advanced features
@@ -170,6 +184,30 @@ tracking metrics
   MOTA:        ...   IDF1: ...   ID switches: ...
   MT / ML:     ...   FP / FN: ...
 ```
+
+## Measured on CPU (no GPU)
+
+These are produced by the scripts above on a laptop CPU, so the tracking and
+evaluation claims are verifiable without any accelerator.
+
+Tracker throughput (`scripts/benchmark_tracker.py`, association only):
+
+| Targets | ms / frame | FPS   |
+|---------|------------|-------|
+| 25      | 0.50       | ~2000 |
+| 50      | 0.95       | ~1058 |
+| 100     | 1.87       | ~535  |
+| 200     | 3.92       | ~255  |
+
+Tracker quality on a hard synthetic sequence with 12% missed detections and
+clutter (`scripts/eval_mot_demo.py`, 30 targets x 200 frames):
+
+| MOTA  | MOTP  | IDF1  | Recall | ID switches |
+|-------|-------|-------|--------|-------------|
+| 81.8  | 86.1  | 78.1  | 82.4   | 28          |
+
+The detector mAP and end-to-end latency tables below still need a GPU; the
+training and export scripts produce them on the deployment hardware.
 
 ## Reproducing the pipeline
 
@@ -265,12 +303,15 @@ common workflow (`make demo`, `make test`, `make train`, `make export`).
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 60 unit tests: tracking, Kalman, NMS, GMC, SAHI, Re-ID, MOT, pipeline
+pre-commit install   # ruff + mypy on every commit
+pytest               # 79 unit tests across detection, tracking, eval and analytics
 ruff check .
+mypy argus
 ```
 
-CI runs lint, the full test suite, and a synthetic tracking smoke test across
-Python 3.9 to 3.12 on every push (see `.github/workflows/ci.yml`).
+CI runs lint, type checking, the full test suite, and a synthetic tracking
+smoke test across Python 3.9 to 3.12 on every push (see
+`.github/workflows/ci.yml`).
 
 ## License
 

@@ -116,11 +116,11 @@ class SlicedDetector:
             idx = np.where(classes == cls_id)[0]
             keep = nms(boxes[idx], scores[idx], self.iou_thresh)
             keep_all.extend(idx[keep].tolist())
-        keep_all = np.asarray(sorted(keep_all), dtype=int)
+        keep_idx = np.asarray(sorted(keep_all), dtype=int)
 
         return Detections(
-            boxes[keep_all].astype(np.float32),
-            scores[keep_all].astype(np.float32),
-            classes[keep_all].astype(np.float32),
+            boxes[keep_idx].astype(np.float32),
+            scores[keep_idx].astype(np.float32),
+            classes[keep_idx].astype(np.float32),
             self.names,
         )

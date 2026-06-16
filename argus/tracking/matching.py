@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 
 try:  # lap gives the fastest Jonker-Volgenant solver, but is optional.
@@ -29,7 +31,9 @@ def linear_assignment(
             tuple(range(cost_matrix.shape[1])),
         )
 
-    matches, unmatched_a, unmatched_b = [], [], []
+    matches: list[list[int]] = []
+    unmatched_a: Iterable[int]
+    unmatched_b: Iterable[int]
     if _HAVE_LAP:
         _, x, y = lap.lapjv(cost_matrix, extend_cost=True, cost_limit=thresh)
         for ix, mx in enumerate(x):
@@ -48,8 +52,8 @@ def linear_assignment(
         unmatched_a = [r for r in range(cost_matrix.shape[0]) if r not in matched_a]
         unmatched_b = [c for c in range(cost_matrix.shape[1]) if c not in matched_b]
 
-    matches = np.asarray(matches, dtype=int).reshape(-1, 2)
-    return matches, tuple(unmatched_a), tuple(unmatched_b)
+    matches_arr = np.asarray(matches, dtype=int).reshape(-1, 2)
+    return matches_arr, tuple(unmatched_a), tuple(unmatched_b)
 
 
 def ious(atlbrs: np.ndarray, btlbrs: np.ndarray) -> np.ndarray:
@@ -82,7 +86,7 @@ def iou_distance(atracks: list, btracks: list) -> np.ndarray:
     else:
         btlbrs = [t.tlbr for t in btracks]
 
-    iou_matrix = ious(atlbrs, btlbrs)
+    iou_matrix = ious(np.asarray(atlbrs, dtype=np.float32), np.asarray(btlbrs, dtype=np.float32))
     return 1.0 - iou_matrix
 
 

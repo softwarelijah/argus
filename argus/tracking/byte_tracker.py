@@ -130,7 +130,7 @@ class ByteTracker:
         remain_high = scores >= cfg.track_thresh
         low_band = (scores > 0.1) & (scores < cfg.track_thresh)
 
-        feats_high = embeddings[remain_high] if use_reid else None
+        feats_high = embeddings[remain_high] if embeddings is not None else None
         dets_high = self._to_stracks(
             boxes[remain_high], scores[remain_high], classes[remain_high], feats_high
         )

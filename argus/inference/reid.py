@@ -71,7 +71,7 @@ class ReIDExtractor:
             return np.empty((0, 512), dtype=np.float32)
 
         h, w = frame.shape[:2]
-        crops = []
+        crops: list[np.ndarray] = []
         for x1, y1, x2, y2 in boxes.astype(int):
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w, x2), min(h, y2)

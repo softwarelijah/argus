@@ -24,11 +24,15 @@ jobs:
       - name: Install core dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pyyaml opencv-python-headless pytest pytest-cov ruff
+          pip install numpy scipy pyyaml opencv-python-headless onnx onnxruntime \
+            pytest pytest-cov ruff mypy types-PyYAML
           pip install -e .
 
       - name: Lint
         run: ruff check argus tests scripts
+
+      - name: Type check
+        run: mypy argus
 
       - name: Test
         run: pytest --cov=argus --cov-report=term-missing

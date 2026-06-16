@@ -23,7 +23,7 @@ import numpy as np
 try:
     import cv2
 except ImportError:  # pragma: no cover
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]
 
 from ..tracking import TrackerConfig
 from .video_pipeline import PipelineResult, VideoPipeline

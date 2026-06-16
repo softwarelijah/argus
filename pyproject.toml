@@ -22,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 train = ["torch>=2.1", "torchvision>=0.16", "ultralytics>=8.1", "tqdm>=4.66"]
 export = ["onnx>=1.15", "onnxruntime>=1.17"]
-dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4"]
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4", "mypy>=1.10", "pre-commit>=3.7"]
 
 [project.scripts]
 argus = "argus.cli:main"
@@ -48,3 +48,24 @@ target-version = "py39"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]
 ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+# Pragmatic settings: the deep-learning backends are dynamically typed and use
+# lazy imports (cv2/torch/tensorrt set to None when absent), so we catch real
+# errors (undefined names, bad imports, unused ignores) without type-checking
+# every dynamically typed body.
+check_untyped_defs = false
+disallow_untyped_defs = false
+exclude = "tests/"
+
+# OpenCV's bundled type stubs are incomplete and vary across wheels, producing
+# false positives (missing ORB_create, findTransformECC overloads). Treat cv2
+# as untyped so it does not generate spurious errors.
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
