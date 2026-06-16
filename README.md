@@ -1,6 +1,6 @@
 # Argus
 
-![CI](https://github.com/your-user/argus/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/softwarelijah/argus/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Checks](https://img.shields.io/badge/ruff%20%7C%20mypy-passing-success)
